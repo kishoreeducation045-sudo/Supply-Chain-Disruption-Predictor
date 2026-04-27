@@ -43,7 +43,10 @@ def fetch_live_global_intelligence():
     """
     try:
         response = model.generate_content(prompt)
-        clean_json = response.text.replace("```json", "").replace("```", "").strip()
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        start_idx = clean_text.find("{")
+        end_idx = clean_text.rfind("}") + 1
+        clean_json = clean_text[start_idx:end_idx] if start_idx != -1 else clean_text
         data = json.loads(clean_json)
         
         if data.get("node_id") != "None":
@@ -60,7 +63,11 @@ def parse_simulation_scenario(text: str):
     prompt = f"""Analyze disaster: '{text}'. Identify node_id and severity (0.0-1.0). Return JSON: {{"node_id": "Node", "severity": 0.9, "news": "Simulated disruption", "weather": "Simulated"}}"""
     response = model.generate_content(prompt)
     try:
-        data = json.loads(response.text.replace("```json", "").replace("```", "").strip())
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        start_idx = clean_text.find("{")
+        end_idx = clean_text.rfind("}") + 1
+        clean_json = clean_text[start_idx:end_idx] if start_idx != -1 else clean_text
+        data = json.loads(clean_json)
         update_node_risks([{
             "id": data["node_id"], "local_risk": data["severity"], "total_risk": data["severity"],
             "latest_news": data.get("news", "Disrupted"), "weather_condition": data.get("weather", "Bad")

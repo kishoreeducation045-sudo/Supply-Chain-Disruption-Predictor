@@ -28,7 +28,7 @@ def calculate_cascading_risk_in_memory():
         weight = edge["risk_weight"]
         if target_id in node_map and source_id in node_map:
             cascade_hit = node_map[target_id]["total_risk"] * weight * decay_factor
-            new_total = min(1.0, node_map[source_id]["total_risk"] + cascade_hit)
+            new_total = max(node_map[source_id]["total_risk"], cascade_hit)
             node_map[source_id]["total_risk"] = round(new_total, 3)
 
     # Database Update

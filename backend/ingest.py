@@ -14,12 +14,16 @@ def ingest_data():
         
         # Synthesize Nodes (use copy to avoid view issues)
         origins = df[['Origin_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition']].rename(columns={'Origin_Port': 'Node'}).copy()
+        origins['Tier'] = 'Tier 1 (Origin)'
+        
         dests = df[['Destination_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition']].rename(columns={'Destination_Port': 'Node'}).copy()
+        dests['Tier'] = 'Tier 2 (Destination)'
         
         all_nodes_df = pd.concat([origins, dests]).groupby('Node').agg({
             'Carrier_Reliability_Score': 'mean', 
             'Geopolitical_Risk_Score': 'mean', 
-            'Weather_Condition': 'last'
+            'Weather_Condition': 'last',
+            'Tier': 'first'
         }).reset_index()
 
         # Prepare node data for batching
@@ -30,7 +34,8 @@ def ingest_data():
                 "id": str(row['Node']),
                 "weather": str(row['Weather_Condition']),
                 "rel": float(row['Carrier_Reliability_Score']),
-                "geo": float(geo_risk)
+                "geo": float(geo_risk),
+                "tier": str(row['Tier'])
             })
 
         # Prepare edge data for batching
@@ -53,7 +58,7 @@ def ingest_data():
                 UNWIND $nodes AS node
                 CREATE (n:Supplier {
                     id: node.id, 
-                    tier: 'Tier 1', 
+                    tier: node.tier, 
                     weather_condition: node.weather, 
                     latest_news: 'Normal',
                     base_reliability: node.rel, 
