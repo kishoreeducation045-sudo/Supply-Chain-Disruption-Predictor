@@ -2,11 +2,12 @@ import os
 import requests
 import json
 import logging
+import re
 import google.generativeai as genai
 from database import update_node_risks
 from engine import calculate_cascading_risk_in_memory
 from dotenv import load_dotenv
-import requests
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -58,62 +59,7 @@ def fetch_live_global_intelligence():
     except Exception as e:
         logger.error(f"Gemini Parse Error: {e}")
 
-def parse_simulation_scenario(text: str):
-    """User-driven manual simulation via Gemini."""
-    try:
-        loc_prompt = f"Extract the primary city or port name from this text: '{text}'. Return ONLY the city name, nothing else."
-        location = model.generate_content(loc_prompt).text.strip()
-    except:
-        location = "Unknown"
-
-    try:
-        w_url = f"https://api.openweathermap.org/data/2.5/weather?q={location}&appid={WEATHER_KEY}"
-        w_res = requests.get(w_url, timeout=5).json()
-        live_weather = w_res['weather'][0]['description']
-    except:
-        live_weather = "Unknown"
-
-    try:
-        n_url = f"https://newsapi.org/v2/everything?q={location}+port&language=en&apiKey={NEWS_KEY}"
-        n_res = requests.get(n_url, timeout=5).json()
-        live_news = [a['title'] for a in n_res.get('articles', [])[:2]]
-    except:
-        live_news = "No recent news"
-
-    prompt = f"""Analyze this hypothetical threat: '{text}'. Compare it against this LIVE data: Weather='{live_weather}', News='{live_news}'. Prioritize the LIVE data for the immediate 'severity' score. Write a comprehensive 3-paragraph Markdown report that analyzes the current reality and assesses the hypothetical threat as a near-future risk. Return strict JSON: {{"node_id": "{location}", "severity": 0.5, "markdown_report": "# Threat Analysis..."}}"""
-    
-    try:
-        response = model.generate_content(prompt)
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        start_idx = clean_text.find("{")
-        end_idx = clean_text.rfind("}") + 1
-        clean_json = clean_text[start_idx:end_idx] if start_idx != -1 else clean_text
-        data = json.loads(clean_json)
-        
-        update_node_risks([{
-            "id": data.get("node_id", location), 
-            "local_risk": data.get("severity", 0.5), 
-            "total_risk": data.get("severity", 0.5),
-            "latest_news": "Simulated Threat + Live Data", 
-            "weather_condition": live_weather
-        }])
-        calculate_cascading_risk_in_memory()
-        return data
-    except Exception as e:
-        logger.error(f"Simulation parse error: {e}")
-        return {
-            "node_id": location,
-            "severity": 0.5,
-            "markdown_report": f"# Error\n\nFailed to generate a full report for {location}. Please try again later."
-        }
-
-def draft_mitigation_email(node_id: str):
-    prompt = f"Draft an urgent 100-word procurement email to find alternate routes bypassing {node_id} due to disruption."
-    return model.generate_content(prompt).text
-
-import requests
-
-def parse_disaster_scenario(text: str) -> dict:
+def parse_simulation_scenario(text: str) -> dict:
     """
     Extracts location, fetches LIVE API data, and asks Gemini to compare 
     the hypothetical threat against the live reality to generate a Markdown report.
@@ -121,7 +67,7 @@ def parse_disaster_scenario(text: str) -> dict:
     try:
         # 1. Quick extraction of the target location
         loc_prompt = f"Extract the single main city name from this threat: '{text}'. Return ONLY the city name, nothing else."
-        loc_response = _gemini_model.generate_content(loc_prompt)
+        loc_response = model.generate_content(loc_prompt)
         city = loc_response.text.strip()
 
         # 2. Fetch Live Reality Data (with safe fallbacks so it never crashes)
@@ -129,14 +75,14 @@ def parse_disaster_scenario(text: str) -> dict:
         news_data = "No major news"
         
         try:
-            w_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={os.getenv('WEATHER_API_KEY')}"
+            w_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_KEY}"
             w_res = requests.get(w_url).json()
             weather_data = w_res['weather'][0]['description']
         except Exception:
             pass # Fails safely if API key is missing or limit reached
 
         try:
-            n_url = f"https://newsapi.org/v2/everything?q={city}+supply+chain&apiKey={os.getenv('NEWS_API_KEY')}"
+            n_url = f"https://newsapi.org/v2/everything?q={city}+supply+chain&apiKey={NEWS_KEY}"
             n_res = requests.get(n_url).json()
             news_data = [a['title'] for a in n_res.get('articles', [])[:2]]
         except Exception:
@@ -153,11 +99,10 @@ def parse_disaster_scenario(text: str) -> dict:
             '{"node_id": "<exact_city_name>", "severity_score": <float>, "markdown_report": "<string>"}'
         )
 
-        response = _gemini_model.generate_content(system_prompt)
+        response = model.generate_content(system_prompt)
         raw = response.text.strip()
         
         # Clean the JSON from any markdown formatting Gemini might add
-        import re
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             raw = match.group(0)
@@ -166,6 +111,15 @@ def parse_disaster_scenario(text: str) -> dict:
         
         # Ensure severity is a float between 0 and 1
         result["severity_score"] = float(max(0.0, min(1.0, result.get("severity_score", 0.5))))
+
+        update_node_risks([{
+            "id": result.get("node_id", city), 
+            "local_risk": result["severity_score"], 
+            "total_risk": result["severity_score"],
+            "latest_news": "Simulated Threat + Live Data", 
+            "weather_condition": weather_data
+        }])
+        calculate_cascading_risk_in_memory()
 
         logger.info(f"Gemini successfully parsed scenario for {city}.")
         return result
@@ -177,3 +131,7 @@ def parse_disaster_scenario(text: str) -> dict:
             "severity_score": 0.5,
             "markdown_report": "### Threat Analysis Error\nFailed to process live threat intelligence. Please ensure API keys are valid and try again."
         }
+
+def draft_mitigation_email(node_id: str):
+    prompt = f"Draft an urgent 100-word procurement email to find alternate routes bypassing {node_id} due to disruption."
+    return model.generate_content(prompt).text
