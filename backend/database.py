@@ -1,94 +1,44 @@
-import logging
 import os
-
-from neo4j import GraphDatabase, Driver
+from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
 load_dotenv()
+URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+AUTH = (os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", "password"))
 
-logger = logging.getLogger(__name__)
+driver = GraphDatabase.driver(URI, auth=AUTH, max_connection_lifetime=200)
 
-_driver: Driver | None = None
-
-
-def get_driver() -> Driver:
-    global _driver
-    if _driver is None:
-        uri = os.getenv("NEO4J_URI", "neo4j+s://localhost:7687")
-        user = os.getenv("NEO4J_USER", "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "")
-        _driver = GraphDatabase.driver(
-            uri,
-            auth=(user, password),
-            max_connection_pool_size=10,
-            connection_timeout=10,
-        )
-        _driver.verify_connectivity()
-        logger.info("Neo4j AuraDB connection verified.")
-    return _driver
-
-
-def close_driver() -> None:
-    global _driver
-    if _driver is not None:
-        _driver.close()
-        _driver = None
-        logger.info("Neo4j driver closed.")
-
-
-def get_full_graph() -> dict:
-    """Return all Supplier nodes and DEPENDS_ON edges as plain Python dicts."""
-    driver = get_driver()
-    nodes: list[dict] = []
-    edges: list[dict] = []
-
+def get_full_graph():
+    query = """
+    MATCH (n:Supplier)
+    OPTIONAL MATCH (n)-[r:DEPENDS_ON]->(m:Supplier)
+    RETURN n, r, m
+    """
+    nodes_dict = {}
+    edges_list = []
     with driver.session() as session:
-        node_result = session.run(
-            """
-            MATCH (n:Supplier)
-            RETURN
-                n.id              AS id,
-                n.tier            AS tier,
-                n.weather_condition AS weather_condition,
-                n.latest_news     AS latest_news,
-                n.base_reliability AS base_reliability,
-                n.geopolitical_risk AS geopolitical_risk,
-                n.local_risk      AS local_risk,
-                n.total_risk      AS total_risk
-            """
-        )
-        for record in node_result:
-            nodes.append(dict(record))
+        result = session.run(query)
+        for record in result:
+            n = record["n"]
+            if n["id"] not in nodes_dict:
+                nodes_dict[n["id"]] = dict(n)
+            r = record["r"]
+            m = record["m"]
+            if r and m:
+                edges_list.append({
+                    "source": n["id"], "target": m["id"],
+                    "lead_time": r.get("lead_time", 0.0), "risk_weight": r.get("risk_weight", 0.1)
+                })
+    return list(nodes_dict.values()), edges_list
 
-        edge_result = session.run(
-            """
-            MATCH (a:Supplier)-[r:DEPENDS_ON]->(b:Supplier)
-            RETURN
-                a.id          AS source,
-                b.id          AS target,
-                r.lead_time   AS lead_time,
-                r.risk_weight AS risk_weight
-            """
-        )
-        for record in edge_result:
-            edges.append(dict(record))
-
-    return {"nodes": nodes, "edges": edges}
-
-
-def update_node_risks(risk_updates: list[dict]) -> None:
-    """Bulk-update local_risk and total_risk for multiple nodes via UNWIND."""
-    if not risk_updates:
-        return
-    driver = get_driver()
+def update_node_risks(updates: list):
+    query = """
+    UNWIND $updates AS update
+    MATCH (n:Supplier {id: update.id})
+    SET n.local_risk = update.local_risk, 
+        n.total_risk = update.total_risk,
+        n.latest_news = update.latest_news,
+        n.weather_condition = update.weather_condition
+    """
     with driver.session() as session:
-        session.run(
-            """
-            UNWIND $updates AS row
-            MATCH (n:Supplier {id: row.id})
-            SET n.local_risk = row.local_risk,
-                n.total_risk = row.total_risk
-            """,
-            updates=risk_updates,
-        )
-    logger.info("Bulk risk update applied to %d nodes.", len(risk_updates))
+        session.run(query, updates=updates)

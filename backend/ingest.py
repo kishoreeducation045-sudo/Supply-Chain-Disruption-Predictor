@@ -1,117 +1,78 @@
-import os
 import pandas as pd
+import os
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
+load_dotenv()
+driver = GraphDatabase.driver(os.getenv("NEO4J_URI"), auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD")))
+
 def ingest_data():
-    load_dotenv()
-    
-    uri = os.getenv("NEO4J_URI")
-    username = os.getenv("NEO4J_USER")
-    password = os.getenv("NEO4J_PASSWORD")
-    
-    if not uri or not username or not password:
-        print("Error: Neo4j credentials not found in .env.")
-        return
-
-    driver = GraphDatabase.driver(uri, auth=(username, password))
-    
-    base_dir = os.path.dirname(__file__)
-    data_file = os.path.join(base_dir, "data", "global_supply_chain_risk_2026.csv")
-    
+    print("Reading Data...")
     try:
-        df = pd.read_csv(data_file)
-    except FileNotFoundError as e:
-        print(f"Error reading CSV file: {e}")
-        return
-
-    # Extract Nodes (Ports)
-    # We need to get all unique ports from Origin_Port and Destination_Port
-    df_origin = df[['Origin_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition', 'Date']].rename(columns={'Origin_Port': 'Port'})
-    df_dest = df[['Destination_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition', 'Date']].rename(columns={'Destination_Port': 'Port'})
-    
-    df_ports = pd.concat([df_origin, df_dest])
-    
-    # Process Base Reliability and Geopolitical Risk
-    node_stats = df_ports.groupby('Port').agg(
-        base_reliability=('Carrier_Reliability_Score', 'mean'),
-        geopolitical_risk_score=('Geopolitical_Risk_Score', 'mean')
-    ).reset_index()
-    
-    # Geopolitical risk normalized 0-1
-    node_stats['geopolitical_risk'] = node_stats['geopolitical_risk_score'] / 10.0
-    
-    # Most recent weather condition
-    df_ports_sorted = df_ports.sort_values('Date').drop_duplicates('Port', keep='last')
-    
-    nodes_df = pd.merge(node_stats, df_ports_sorted[['Port', 'Weather_Condition']], on='Port')
-    
-    nodes_records = []
-    for _, row in nodes_df.iterrows():
-        nodes_records.append({
-            'Node_ID': row['Port'],
-            'Tier': 'Tier 1' if 'Shanghai' in row['Port'] or 'Singapore' in row['Port'] else 'Tier 2',
-            'Weather_Condition': row['Weather_Condition'],
-            'base_reliability': float(row['base_reliability']),
-            'geopolitical_risk': float(row['geopolitical_risk'])
-        })
+        # Load CSV
+        df = pd.read_csv("data/global_supply_chain_risk_2026.csv")
         
-    # Edge Extraction: Group by Origin and Destination
-    edges_df = df.groupby(['Origin_Port', 'Destination_Port']).agg(
-        Avg_Lead_Time=('Lead_Time_Days', 'mean'),
-        Risk_Score=('Disruption_Occurred', 'mean')
-    ).reset_index()
+        # Synthesize Nodes (use copy to avoid view issues)
+        origins = df[['Origin_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition']].rename(columns={'Origin_Port': 'Node'}).copy()
+        dests = df[['Destination_Port', 'Carrier_Reliability_Score', 'Geopolitical_Risk_Score', 'Weather_Condition']].rename(columns={'Destination_Port': 'Node'}).copy()
+        
+        all_nodes_df = pd.concat([origins, dests]).groupby('Node').agg({
+            'Carrier_Reliability_Score': 'mean', 
+            'Geopolitical_Risk_Score': 'mean', 
+            'Weather_Condition': 'last'
+        }).reset_index()
 
-    edges_records = []
-    for _, row in edges_df.iterrows():
-        edges_records.append({
-            'Source': row['Origin_Port'],
-            'Target': row['Destination_Port'],
-            'Avg_Lead_Time': float(row['Avg_Lead_Time']),
-            'Risk_Score': float(row['Risk_Score'])
-        })
+        # Prepare node data for batching
+        nodes_data = []
+        for _, row in all_nodes_df.iterrows():
+            geo_risk = min(row['Geopolitical_Risk_Score'] / 10.0, 1.0)
+            nodes_data.append({
+                "id": str(row['Node']),
+                "weather": str(row['Weather_Condition']),
+                "rel": float(row['Carrier_Reliability_Score']),
+                "geo": float(geo_risk)
+            })
 
-    wipe_query = "MATCH (n) DETACH DELETE n"
+        # Prepare edge data for batching
+        edges_data = []
+        for _, row in df.iterrows():
+            risk_wt = float(row['Disruption_Occurred']) if 'Disruption_Occurred' in df.columns else 0.5
+            edges_data.append({
+                "src": str(row['Origin_Port']),
+                "tgt": str(row['Destination_Port']),
+                "lt": float(row['Lead_Time_Days']),
+                "rw": float(risk_wt)
+            })
 
-    nodes_query = """
-    UNWIND $nodes AS row
-    MERGE (n:Supplier {id: row.Node_ID})
-    SET n.tier = row.Tier,
-        n.weather_condition = row.Weather_Condition,
-        n.latest_news = "",
-        n.base_reliability = row.base_reliability,
-        n.geopolitical_risk = row.geopolitical_risk,
-        n.local_risk = 0.0,
-        n.total_risk = 0.0
-    """
-
-    edges_query = """
-    UNWIND $edges AS row
-    MATCH (source:Supplier {id: row.Source})
-    MATCH (target:Supplier {id: row.Target})
-    MERGE (source)-[r:DEPENDS_ON]->(target)
-    SET r.lead_time = toFloat(row.Avg_Lead_Time),
-        r.risk_weight = toFloat(row.Risk_Score)
-    """
-
-    try:
         with driver.session() as session:
-             print("Wiping existing Neo4j database...")
-             session.run(wipe_query)
-             
-             print(f"Ingesting {len(nodes_records)} Supplier nodes...")
-             session.run(nodes_query, nodes=nodes_records)
-             print("Successfully ingested nodes.")
-             
-             print(f"Creating {len(edges_records)} DEPENDS_ON edges...")
-             session.run(edges_query, edges=edges_records)
-             print("Successfully created edges.")
+            print("Wiping existing data...")
+            session.run("MATCH (n) DETACH DELETE n")
+            
+            print(f"Creating {len(nodes_data)} nodes...")
+            session.run("""
+                UNWIND $nodes AS node
+                CREATE (n:Supplier {
+                    id: node.id, 
+                    tier: 'Tier 1', 
+                    weather_condition: node.weather, 
+                    latest_news: 'Normal',
+                    base_reliability: node.rel, 
+                    geopolitical_risk: node.geo, 
+                    local_risk: 0.0, 
+                    total_risk: 0.0
+                })
+            """, nodes=nodes_data)
+            
+            print(f"Creating {len(edges_data)} relationships...")
+            session.run("""
+                UNWIND $edges AS edge
+                MATCH (s:Supplier {id: edge.src}), (t:Supplier {id: edge.tgt})
+                MERGE (s)-[:DEPENDS_ON {lead_time: edge.lt, risk_weight: edge.rw}]->(t)
+            """, edges=edges_data)
+
+        print("Ingestion Complete!")
     except Exception as e:
-        print(f"Error executing Cypher queries: {e}")
-    finally:
-        driver.close()
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    print("Starting raw CSV data ingestion to Neo4j...")
     ingest_data()
-    print("Data ingestion complete.")

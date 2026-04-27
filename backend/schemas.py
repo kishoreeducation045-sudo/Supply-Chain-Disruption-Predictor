@@ -1,32 +1,29 @@
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel
+from typing import List, Optional
 
 class SimulationRequest(BaseModel):
-    scenario_text: str = Field(
-        ...,
-        min_length=3,
-        description="Free-text description of the disruption scenario, e.g. 'Typhoon in Singapore'.",
-    )
-
+    scenario_text: str
 
 class MitigationRequest(BaseModel):
-    failing_node_id: str = Field(
-        ...,
-        min_length=1,
-        description="The graph node ID of the supplier that is failing.",
-    )
+    failing_node_id: str
 
+class GlobalMetrics(BaseModel):
+    global_health: float
+    simulated_delta_cost: str
+    active_threats: int
+    weather_risk_pct: int
+    geo_risk_pct: int
+    intelligence_stream: List[str]
 
 class NodeSchema(BaseModel):
     id: str
     tier: str
-    weather_condition: str
-    latest_news: str
+    weather_condition: Optional[str] = "Clear"
+    latest_news: Optional[str] = "Normal operations"
     base_reliability: float
     geopolitical_risk: float
     local_risk: float
     total_risk: float
-
 
 class EdgeSchema(BaseModel):
     source: str
@@ -34,26 +31,7 @@ class EdgeSchema(BaseModel):
     lead_time: float
     risk_weight: float
 
-
-class GlobalMetrics(BaseModel):
-    global_health: float
-    threat_streams: int
-    avg_risk_percentage: float
-
-
 class NetworkResponse(BaseModel):
-    nodes: list[NodeSchema]
-    edges: list[EdgeSchema]
+    nodes: List[NodeSchema]
+    edges: List[EdgeSchema]
     metrics: GlobalMetrics
-
-
-class SimulationResponse(BaseModel):
-    status: str
-    affected_node_id: str
-    severity_score: float
-    message: str
-
-
-class MitigationResponse(BaseModel):
-    failing_node_id: str
-    drafted_email: str
