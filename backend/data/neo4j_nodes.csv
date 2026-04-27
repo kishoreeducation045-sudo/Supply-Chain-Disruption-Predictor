@@ -1,0 +1,10 @@
+Node_ID,Weather_Condition,Tier
+Singapore,Hurricane,Tier-2 (Components)
+Rotterdam,Rain,OEM (Final Assembly)
+Busan,Hurricane,Tier-3 (Raw Materials)
+Shanghai,Storm,Tier-2 (Components)
+Dubai,Clear,OEM (Final Assembly)
+Los Angeles,Storm,Tier-1 (Sub-Assembly)
+Hamburg,Fog,Tier-3 (Raw Materials)
+Antwerp,Storm,Tier-3 (Raw Materials)
+Marseille,Rain,Tier-2 (Components)
