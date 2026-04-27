@@ -13,7 +13,7 @@ from schemas import (
     SimulationRequest,
     SimulationResponse,
 )
-from services import draft_mitigation_email, mock_fetch_news_and_weather, parse_disaster_scenario
+from services import draft_mitigation_email, fetch_live_global_intelligence, parse_disaster_scenario
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,10 +39,10 @@ _scheduler = BackgroundScheduler()
 
 
 def _scheduled_risk_refresh() -> None:
-    """Fetch mock data, parse it with Gemini, then cascade risk scores."""
+    """Fetch live data, parse it with Gemini, then cascade risk scores."""
     logger.info("Scheduled tick: starting risk refresh pipeline.")
     try:
-        raw_feed = mock_fetch_news_and_weather()
+        raw_feed = fetch_live_global_intelligence()
         parsed = parse_disaster_scenario(raw_feed)
         calculate_cascading_risk_in_memory(
             override_node_id=parsed.get("node_id"),
@@ -58,12 +58,12 @@ def startup_event() -> None:
     _scheduler.add_job(
         _scheduled_risk_refresh,
         trigger="interval",
-        minutes=5,
+        minutes=15,
         id="risk_refresh",
         replace_existing=True,
     )
     _scheduler.start()
-    logger.info("APScheduler started — risk refresh every 5 minutes.")
+    logger.info("APScheduler started — risk refresh every 15 minutes.")
 
 
 @app.on_event("shutdown")

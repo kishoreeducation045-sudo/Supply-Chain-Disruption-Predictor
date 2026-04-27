@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import requests
 
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -12,30 +13,54 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=os.getenv("GEMINI_API_KEY", ""))
 _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
-_MOCK_NEWS_PAYLOAD = json.dumps(
-    {
-        "location": "Singapore",
-        "event": "Massive port strike",
-        "detail": (
-            "Longshoremen at the Port of Singapore have begun an indefinite strike, "
-            "halting all cargo operations. Approximately 40% of global container traffic "
-            "that transits Singapore is now suspended. Logistics analysts warn of severe "
-            "multi-week delays for electronics, semiconductor, and raw-material supply chains."
-        ),
-        "weather": {
-            "condition": "Typhoon",
-            "wind_speed_kmh": 185,
-            "rainfall_mm": 320,
-        },
-        "severity_estimate": 0.92,
-    }
-)
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
 
+def fetch_live_global_intelligence() -> str:
+    """Fetch live news and weather, then combine them for Gemini."""
+    # 1. Fetch News
+    try:
+        if not NEWS_API_KEY:
+            raise ValueError("NEWS_API_KEY not set")
+        news_url = f"https://newsapi.org/v2/everything?q=supply+chain+disruption+OR+port+strike&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
+        news_res = requests.get(news_url, timeout=10)
+        news_res.raise_for_status()
+        articles = news_res.json().get("articles", [])
+        if articles:
+            headlines = [article.get("title", "") for article in articles[:3]]
+        else:
+            headlines = ["No major logistics disruptions reported."]
+    except Exception as exc:
+        logger.warning("Failed to fetch live news: %s", exc)
+        headlines = ["No major logistics disruptions reported."]
 
-def mock_fetch_news_and_weather() -> str:
-    """Return a hardcoded disruption payload — preserves external API rate limits."""
-    logger.info("mock_fetch_news_and_weather: returning hardcoded Singapore disruption payload.")
-    return _MOCK_NEWS_PAYLOAD
+    # 2. Fetch Weather
+    weather_data = {}
+    for city in ["Singapore", "Rotterdam"]:
+        try:
+            if not WEATHER_API_KEY:
+                raise ValueError("WEATHER_API_KEY not set")
+            weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
+            weather_res = requests.get(weather_url, timeout=10)
+            weather_res.raise_for_status()
+            weather_json = weather_res.json()
+            condition = weather_json.get("weather", [{}])[0].get("main", "Clear")
+            weather_data[city] = condition
+        except Exception as exc:
+            logger.warning("Failed to fetch weather for %s: %s", city, exc)
+            weather_data[city] = "Clear"
+
+    # 3. Combine
+    combined_text = (
+        "LIVE GLOBAL INTELLIGENCE REPORT:\n"
+        f"Recent News Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
+        "Current Weather Conditions:\n"
+    )
+    for city, cond in weather_data.items():
+        combined_text += f"- {city}: {cond}\n"
+
+    logger.info("fetch_live_global_intelligence combined text: \n%s", combined_text)
+    return combined_text
 
 
 def parse_disaster_scenario(text: str) -> dict:
