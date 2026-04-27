@@ -10,7 +10,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY", ""))
-_gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+_gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 _MOCK_NEWS_PAYLOAD = json.dumps(
     {
@@ -47,9 +47,9 @@ def parse_disaster_scenario(text: str) -> dict:
     system_prompt = (
         "You are a supply chain risk analyst. "
         "Given a disruption description, identify the most affected supplier node ID "
-        "(use short identifiers like 'SGP-PORT', 'APAC-HUB', or a city/port code) "
+        "(use the exact city name mentioned, e.g., 'Singapore', 'Antwerp', 'Shanghai', 'Rotterdam') "
         "and assign a severity_score between 0.0 (no impact) and 1.0 (total disruption). "
-        "Respond ONLY with a valid JSON object in this exact format: "
+        "Respond ONLY with a valid JSON object in this exact format, with no markdown formatting: "
         '{"node_id": "<string>", "severity_score": <float>}'
     )
     full_prompt = f"{system_prompt}\n\nDisruption description:\n{text}"
@@ -57,12 +57,11 @@ def parse_disaster_scenario(text: str) -> dict:
     try:
         response = _gemini_model.generate_content(full_prompt)
         raw = response.text.strip()
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        result = json.loads(raw.strip())
+        import re
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
+        result = json.loads(raw)
         result["severity_score"] = float(
             max(0.0, min(1.0, result.get("severity_score", 0.5)))
         )

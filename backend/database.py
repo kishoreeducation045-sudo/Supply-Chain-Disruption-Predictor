@@ -52,6 +52,7 @@ def get_full_graph() -> dict:
                 n.weather_condition AS weather_condition,
                 n.latest_news     AS latest_news,
                 n.base_reliability AS base_reliability,
+                n.geopolitical_risk AS geopolitical_risk,
                 n.local_risk      AS local_risk,
                 n.total_risk      AS total_risk
             """
