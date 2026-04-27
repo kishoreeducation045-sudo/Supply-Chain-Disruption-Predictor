@@ -10,10 +10,11 @@ function FlowCanvas() {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [metrics, setMetrics] = useState(null);
-  const [simText, setSimText] = useState("");
+  const [scenarioText, setScenarioText] = useState("");
   const [selectedNode, setSelectedNode] = useState(null);
   const [mitigationDraft, setMitigationDraft] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [globalMetrics, setGlobalMetrics] = useState({ global_health: 1.0, threat_streams: 0, avg_risk_percentage: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [reportData, setReportData] = useState("");
   const { fitView } = useReactFlow();
@@ -68,30 +69,52 @@ function FlowCanvas() {
 
   useEffect(() => { fetchGraph(); }, []);
 
+  const handleDownload = () => {
+    const blob = new Blob([reportData], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ChainIQ_Threat_Report.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleSimulate = async () => {
-    setLoading(true);
+    if (!scenarioText.trim()) return;
+    setIsSimulating(true);
+    
     try {
-      const res = await runSimulation(simText);
-      await fetchGraph();
-      if (res && res.data && res.data.data && res.data.data.markdown_report) {
-        setReportData(res.data.data.markdown_report);
-        setIsModalOpen(true);
-      }
-    } catch (err) {
-      console.error("Simulation failed:", err);
+      const res = await runSimulation(scenarioText);
+      // Safely extract the report, accounting for FastAPI and Axios wrappers
+      const reportContent = res?.data?.data?.markdown_report || res?.data?.markdown_report || "### Error\nCould not retrieve the report from the server. Check backend logs.";
+      
+      setReportData(reportContent);
+      setIsModalOpen(true); // This will now successfully trigger the window!
+      await fetchGraph(); 
+      
+    } catch (error) {
+      console.error("Simulation failed:", error);
+      setReportData("### System Failure\nThe AI Intelligence Engine failed to respond.");
+      setIsModalOpen(true);
     } finally {
-      setLoading(false);
+      setIsSimulating(false);
     }
   };
 
-  const handleNodeClick = async (e, node) => {
-    setSelectedNode(node.data.fullData);
-    if (node.data.fullData.total_risk > 0.7) {
-      const res = await getMitigation(node.data.fullData.id);
-      setMitigationDraft(res.data.drafted_action_plan);
+  useEffect(() => {
+    if (selectedNode && selectedNode.total_risk > 0.7) {
+      getMitigation(selectedNode.id)
+        .then(res => setMitigationDraft(res.data.drafted_action_plan))
+        .catch(console.error);
     } else {
       setMitigationDraft("");
     }
+  }, [selectedNode]);
+
+  const handleNodeClick = (e, node) => {
+    setSelectedNode(node.data.fullData);
   };
 
   return (
@@ -102,7 +125,7 @@ function FlowCanvas() {
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={handleNodeClick} fitView>
           <Background color="#3e4850" gap={30} size={1} />
           <Panel position="bottom-center">
-            <button 
+            <button
               onClick={() => fitView({ duration: 800, padding: 0.2 })}
               className="bg-[#171f33]/90 text-primary font-bold border border-primary px-4 py-2 rounded shadow-lg tracking-widest text-xs uppercase hover:bg-primary hover:text-black transition-colors mb-4"
             >
@@ -125,12 +148,12 @@ function FlowCanvas() {
           <div className="bg-surface-container-high rounded-xl p-5 mb-6 border border-slate-700">
             <label className="text-xs font-bold text-primary tracking-widest uppercase mb-3 block">Threat Injection Engine</label>
             <textarea
-              value={simText} onChange={(e) => setSimText(e.target.value)}
+              value={scenarioText} onChange={(e) => setScenarioText(e.target.value)}
               className="w-full bg-surface border-none rounded-lg p-3 text-sm text-white focus:ring-1 focus:ring-primary min-h-[100px]"
               placeholder="E.g. Category 5 hurricane in East Asia..."
             />
             <button onClick={handleSimulate} className="w-full mt-4 bg-primary text-black font-black py-3 rounded-lg text-xs tracking-widest hover:bg-white transition-all">
-              {loading ? "PROCESSING..." : "ANALYZE THREAT IMPACT"}
+              {isSimulating ? "PROCESSING..." : "ANALYZE THREAT IMPACT"}
             </button>
           </div>
 
@@ -193,38 +216,41 @@ function FlowCanvas() {
         </div>
       </div>
 
+      {/* --- ADD THIS MODAL CODE RIGHT BEFORE THE FINAL </div> --- */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-[768px] h-[80vh] bg-surface-container-high rounded-2xl border border-slate-600 shadow-2xl p-8 flex flex-col relative pointer-events-auto">
-            <button 
-              className="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-lg"
-              onClick={() => setIsModalOpen(false)}
-            >
-              ✕
-            </button>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-black text-white uppercase tracking-widest">Threat Analysis Report</h2>
-              <button 
-                onClick={() => {
-                  const blob = new Blob([reportData], { type: 'text/markdown' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = "ChainIQ_Threat_Report.md";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-                className="bg-primary text-black hover:bg-white font-bold px-4 py-2 rounded text-xs uppercase tracking-widest transition-colors"
-              >
-                Download Report (.md)
-              </button>
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-auto">
+          <div className="bg-slate-900 border border-slate-700 w-[768px] h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
+              <h2 className="text-lg font-black tracking-widest text-emerald-400 uppercase">AI Threat Intelligence Report</h2>
+              <div className="flex gap-4">
+                <button 
+                  onClick={handleDownload}
+                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                >
+                  Download (.md)
+                </button>
+                <button 
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-colors"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-            <pre className="whitespace-pre-wrap font-sans text-sm text-slate-300 overflow-y-auto flex-1 p-4 bg-[#0b1326]/50 rounded-lg border border-slate-700">
-              {reportData}
-            </pre>
+            
+            {/* Modal Content */}
+            <div className="flex-1 p-8 overflow-y-auto bg-slate-900 custom-scrollbar">
+              <pre className="whitespace-pre-wrap font-sans text-sm text-slate-300 leading-relaxed">
+                {reportData}
+              </pre>
+            </div>
+
           </div>
         </div>
       )}
+      {/* -------------------------------------------------------- */}
     </div>
   );
 }
