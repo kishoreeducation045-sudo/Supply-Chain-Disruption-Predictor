@@ -60,22 +60,52 @@ def fetch_live_global_intelligence():
 
 def parse_simulation_scenario(text: str):
     """User-driven manual simulation via Gemini."""
-    prompt = f"""Analyze disaster: '{text}'. Identify node_id and severity (0.0-1.0). Return JSON: {{"node_id": "Node", "severity": 0.9, "news": "Simulated disruption", "weather": "Simulated"}}"""
-    response = model.generate_content(prompt)
     try:
+        loc_prompt = f"Extract the primary city or port name from this text: '{text}'. Return ONLY the city name, nothing else."
+        location = model.generate_content(loc_prompt).text.strip()
+    except:
+        location = "Unknown"
+
+    try:
+        w_url = f"https://api.openweathermap.org/data/2.5/weather?q={location}&appid={WEATHER_KEY}"
+        w_res = requests.get(w_url, timeout=5).json()
+        live_weather = w_res['weather'][0]['description']
+    except:
+        live_weather = "Unknown"
+
+    try:
+        n_url = f"https://newsapi.org/v2/everything?q={location}+port&language=en&apiKey={NEWS_KEY}"
+        n_res = requests.get(n_url, timeout=5).json()
+        live_news = [a['title'] for a in n_res.get('articles', [])[:2]]
+    except:
+        live_news = "No recent news"
+
+    prompt = f"""Analyze this hypothetical threat: '{text}'. Compare it against this LIVE data: Weather='{live_weather}', News='{live_news}'. Prioritize the LIVE data for the immediate 'severity' score. Write a comprehensive 3-paragraph Markdown report that analyzes the current reality and assesses the hypothetical threat as a near-future risk. Return strict JSON: {{"node_id": "{location}", "severity": 0.5, "markdown_report": "# Threat Analysis..."}}"""
+    
+    try:
+        response = model.generate_content(prompt)
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         start_idx = clean_text.find("{")
         end_idx = clean_text.rfind("}") + 1
         clean_json = clean_text[start_idx:end_idx] if start_idx != -1 else clean_text
         data = json.loads(clean_json)
+        
         update_node_risks([{
-            "id": data["node_id"], "local_risk": data["severity"], "total_risk": data["severity"],
-            "latest_news": data.get("news", "Disrupted"), "weather_condition": data.get("weather", "Bad")
+            "id": data.get("node_id", location), 
+            "local_risk": data.get("severity", 0.5), 
+            "total_risk": data.get("severity", 0.5),
+            "latest_news": "Simulated Threat + Live Data", 
+            "weather_condition": live_weather
         }])
         calculate_cascading_risk_in_memory()
         return data
-    except:
-        return {"error": "Failed parse"}
+    except Exception as e:
+        logger.error(f"Simulation parse error: {e}")
+        return {
+            "node_id": location,
+            "severity": 0.5,
+            "markdown_report": f"# Error\n\nFailed to generate a full report for {location}. Please try again later."
+        }
 
 def draft_mitigation_email(node_id: str):
     prompt = f"Draft an urgent 100-word procurement email to find alternate routes bypassing {node_id} due to disruption."
