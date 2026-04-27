@@ -84,16 +84,16 @@ function FlowCanvas() {
   const handleSimulate = async () => {
     if (!scenarioText.trim()) return;
     setIsSimulating(true);
-    
+
     try {
       const res = await runSimulation(scenarioText);
       // Safely extract the report, accounting for FastAPI and Axios wrappers
       const reportContent = res?.data?.data?.markdown_report || res?.data?.markdown_report || "### Error\nCould not retrieve the report from the server. Check backend logs.";
-      
+
       setReportData(reportContent);
       setIsModalOpen(true); // This will now successfully trigger the window!
-      await fetchGraph(); 
-      
+      await fetchGraph();
+
     } catch (error) {
       console.error("Simulation failed:", error);
       setReportData("### System Failure\nThe AI Intelligence Engine failed to respond.");
@@ -220,18 +220,18 @@ function FlowCanvas() {
       {isModalOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-auto">
           <div className="bg-slate-900 border border-slate-700 w-[768px] h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            
+
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
               <h2 className="text-lg font-black tracking-widest text-emerald-400 uppercase">AI Threat Intelligence Report</h2>
               <div className="flex gap-4">
-                <button 
+                <button
                   onClick={handleDownload}
                   className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                 >
                   Download (.md)
                 </button>
-                <button 
+                <button
                   onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-colors"
                 >
@@ -239,7 +239,7 @@ function FlowCanvas() {
                 </button>
               </div>
             </div>
-            
+
             {/* Modal Content */}
             <div className="flex-1 p-8 overflow-y-auto bg-slate-900 custom-scrollbar">
               <pre className="whitespace-pre-wrap font-sans text-sm text-slate-300 leading-relaxed">

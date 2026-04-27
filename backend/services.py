@@ -8,11 +8,11 @@ from database import update_node_risks
 from engine import calculate_cascading_risk_in_memory
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 NEWS_KEY = os.getenv("NEWS_API_KEY")
 WEATHER_KEY = os.getenv("WEATHER_API_KEY")
 
