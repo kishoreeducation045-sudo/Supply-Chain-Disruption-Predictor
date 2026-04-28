@@ -42,3 +42,11 @@ def update_node_risks(updates: list):
     """
     with driver.session() as session:
         session.run(query, updates=updates)
+
+def close_driver():
+    """Safely closes the Neo4j connection when the server shuts down."""
+    try:
+        driver.close()
+        print("Neo4j driver safely closed.")
+    except Exception as e:
+        print(f"Error closing Neo4j driver: {e}")

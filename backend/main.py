@@ -4,6 +4,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import schemas
 from engine import calculate_cascading_risk_in_memory
 from services import fetch_live_global_intelligence, parse_simulation_scenario, draft_mitigation_email
+from database import close_driver
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -15,6 +16,10 @@ scheduler.start()
 @app.on_event("startup")
 def startup():
     calculate_cascading_risk_in_memory()
+
+@app.on_event("shutdown")
+def shutdown():
+    close_driver()
 
 @app.get("/")
 def read_root():
