@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import ReactFlow, { Background, Controls, MarkerType, ReactFlowProvider, useReactFlow, Panel } from 'reactflow';
+import ReactFlow, { Background, Controls, MarkerType, ReactFlowProvider, useReactFlow, Panel, useNodesState, useEdgesState } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { getNetwork, runSimulation, getMitigation } from './api/client';
 import CustomNode from './components/CustomNode';
@@ -7,13 +7,15 @@ import CustomNode from './components/CustomNode';
 const nodeTypes = { custom: CustomNode };
 
 function FlowCanvas() {
-  const [nodes, setNodes] = useState([]);
-  const [edges, setEdges] = useState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [metrics, setMetrics] = useState(null);
   const [scenarioText, setScenarioText] = useState("");
   const [selectedNode, setSelectedNode] = useState(null);
   const [mitigationDraft, setMitigationDraft] = useState("");
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isDraftingMitigation, setIsDraftingMitigation] = useState(false);
   const [globalMetrics, setGlobalMetrics] = useState({ global_health: 1.0, threat_streams: 0, avg_risk_percentage: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [reportData, setReportData] = useState("");
@@ -35,36 +37,43 @@ function FlowCanvas() {
   };
 
   const fetchGraph = async () => {
-    const res = await getNetwork();
-    setMetrics(res.data.metrics);
+    setIsInitialLoading(true);
+    try {
+      const res = await getNetwork();
+      setMetrics(res.data.metrics);
 
-    let rfNodes = res.data.nodes.map(n => ({
-      id: n.id,
-      type: 'custom',
-      data: { fullData: n },
-      position: { x: 0, y: 0 }
-    }));
+      let rfNodes = res.data.nodes.map(n => ({
+        id: n.id,
+        type: 'custom',
+        data: { fullData: n },
+        position: { x: 0, y: 0 }
+      }));
 
-    const generateColor = (str) => {
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
-      }
-      const hue = Math.abs(hash) % 360;
-      return `hsl(${hue}, 80%, 60%)`;
-    };
-
-    let rfEdges = res.data.edges.map(e => {
-      const color = generateColor(e.source);
-      return {
-        id: `e-${e.source}-${e.target}`, source: e.source, target: e.target,
-        animated: true, style: { stroke: color, strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: color }
+      const generateColor = (str) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        return `hsl(${hue}, 80%, 60%)`;
       };
-    });
 
-    setNodes(getCircularLayout(rfNodes, rfEdges));
-    setEdges(rfEdges);
+      let rfEdges = res.data.edges.map(e => {
+        const color = generateColor(e.source);
+        return {
+          id: `e-${e.source}-${e.target}`, source: e.source, target: e.target,
+          animated: true, style: { stroke: color, strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: color }
+        };
+      });
+
+      setNodes(getCircularLayout(rfNodes, rfEdges));
+      setEdges(rfEdges);
+    } catch (err) {
+      console.error("Error fetching graph", err);
+    } finally {
+      setIsInitialLoading(false);
+    }
   };
 
   useEffect(() => { fetchGraph(); }, []);
@@ -105,11 +114,15 @@ function FlowCanvas() {
 
   useEffect(() => {
     if (selectedNode && selectedNode.total_risk > 0.7) {
+      setIsDraftingMitigation(true);
+      setMitigationDraft("");
       getMitigation(selectedNode.id)
         .then(res => setMitigationDraft(res.data.drafted_action_plan))
-        .catch(console.error);
+        .catch(console.error)
+        .finally(() => setIsDraftingMitigation(false));
     } else {
       setMitigationDraft("");
+      setIsDraftingMitigation(false);
     }
   }, [selectedNode]);
 
@@ -117,16 +130,23 @@ function FlowCanvas() {
     setSelectedNode(node.data.fullData);
   };
 
+  const handleRecenter = () => {
+    setNodes((nds) => getCircularLayout(nds, edges));
+    setTimeout(() => {
+      fitView({ duration: 800, padding: 0.2 });
+    }, 50);
+  };
+
   return (
     <div className="relative w-screen h-screen bg-[#0b1326] text-white font-inter overflow-hidden">
 
       {/* LAYER 0: React Flow Canvas (Interactive background) */}
       <div className="absolute inset-0 z-0">
-        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={handleNodeClick} fitView>
+        <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} nodeTypes={nodeTypes} onNodeClick={handleNodeClick} fitView>
           <Background color="#3e4850" gap={30} size={1} />
           <Panel position="bottom-center">
             <button
-              onClick={() => fitView({ duration: 800, padding: 0.2 })}
+              onClick={handleRecenter}
               className="bg-[#171f33]/90 text-primary font-bold border border-primary px-4 py-2 rounded shadow-lg tracking-widest text-xs uppercase hover:bg-primary hover:text-black transition-colors mb-4"
             >
               Recenter Network
@@ -172,11 +192,23 @@ function FlowCanvas() {
             </div>
           )}
 
-          {mitigationDraft && (
+          {(isDraftingMitigation || mitigationDraft) && (
             <div className="mt-6 bg-red-950/40 border border-error/50 rounded-xl p-4">
-              <p className="text-xs text-error font-bold tracking-widest uppercase mb-2">AI Mitigation Draft</p>
-              <p className="text-xs text-slate-300 italic mb-4">{mitigationDraft}</p>
-              <button className="w-full bg-error text-white font-bold py-2 rounded text-xs uppercase">Deploy Action</button>
+              <p className="text-xs text-error font-bold tracking-widest uppercase mb-2 flex items-center gap-2">
+                AI Mitigation Draft
+                {isDraftingMitigation && <span className="w-2 h-2 rounded-full bg-error animate-ping"></span>}
+              </p>
+              {isDraftingMitigation ? (
+                <div className="flex flex-col items-center justify-center py-6">
+                  <div className="w-6 h-6 border-2 border-error border-t-transparent rounded-full animate-spin mb-2"></div>
+                  <p className="text-[10px] text-error tracking-widest uppercase font-bold animate-pulse">GENERATING ACTION PLAN...</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-300 italic mb-4">{mitigationDraft}</p>
+                  <button className="w-full bg-error text-white font-bold py-2 rounded text-xs uppercase hover:bg-red-600 transition-colors">Deploy Action</button>
+                </>
+              )}
             </div>
           )}
         </aside>
@@ -248,6 +280,23 @@ function FlowCanvas() {
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* Global Loaders */}
+      {isInitialLoading && (
+        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0b1326] pointer-events-auto">
+          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-6"></div>
+          <h2 className="text-xl font-black text-primary tracking-[0.3em] uppercase animate-pulse">INITIALIZING GRAPH DATA</h2>
+          <p className="text-xs text-slate-500 mt-2 tracking-widest uppercase">Fetching live nodes & connecting intelligence streams...</p>
+        </div>
+      )}
+
+      {isSimulating && (
+        <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-auto">
+          <div className="w-12 h-12 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <h2 className="text-lg font-black text-emerald-400 tracking-[0.2em] uppercase animate-pulse">PROCESSING THREAT IMPACT</h2>
+          <p className="text-[10px] text-emerald-600 mt-2 tracking-widest uppercase">Calculating cascading risk across network topology...</p>
         </div>
       )}
       {/* -------------------------------------------------------- */}
