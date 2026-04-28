@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: scdp-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: WEATHER_API_KEY
+        sync: false
